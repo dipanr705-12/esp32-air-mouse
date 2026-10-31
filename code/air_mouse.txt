@@ -1,0 +1,184 @@
+
+#include <Wire.h>
+#include <MPU6050_light.h>
+#include <BleMouse.h>
+
+MPU6050 mpu(Wire);
+BleMouse bleMouse("ESP32 Air Mouse", "ESP32", 100);
+
+#define SDA_PIN 21
+#define SCL_PIN 22
+#define BUTTON_PIN 27
+
+// Cursor settings
+float sensitivity = 0.12;
+float deadZone = 0.5;
+float alpha = 0.35;
+
+// Z-axis contribution
+float rollSensitivity = 0.35;
+
+// Filter values
+float fx = 0, fy = 0, fz = 0;
+
+// Fractional movement
+float moveX = 0;
+float moveY = 0;
+
+// Button settings
+const unsigned long debounceDelay = 35;
+const unsigned long longPressTime = 700;
+
+bool lastReading = HIGH;
+bool stableState = HIGH;
+bool buttonHandled = false;
+
+unsigned long debounceTime = 0;
+unsigned long pressTime = 0;
+unsigned long lastTime = 0;
+
+// Dead zone function
+float applyDeadZone(float value) {
+
+  if (abs(value) < deadZone) {
+    return 0;
+  }
+
+  return value - (value > 0 ? deadZone : -deadZone);
+}
+
+void setup() {
+
+  Serial.begin(115200);
+
+  pinMode(BUTTON_PIN, INPUT_PULLUP);
+
+  Wire.begin(SDA_PIN, SCL_PIN);
+
+  Serial.println("Starting MPU6050...");
+
+  byte status = mpu.begin();
+
+  while (status != 0) {
+    Serial.println("MPU6050 connection failed!");
+    delay(1000);
+    status = mpu.begin();
+  }
+
+  Serial.println("Keep MPU6050 still...");
+
+  delay(2000);
+
+  mpu.calcOffsets();
+
+  Serial.println("Calibration complete!");
+
+  bleMouse.begin();
+
+  Serial.println("ESP32 Air Mouse Ready!");
+
+  lastTime = millis();
+}
+
+void loop() {
+
+  mpu.update();
+
+  unsigned long now = millis();
+
+  float dt = now - lastTime;
+  lastTime = now;
+
+  if (dt > 30) dt = 30;
+
+  // Three-axis gyroscope readings
+  float gx = mpu.getGyroX();
+  float gy = mpu.getGyroY();
+  float gz = mpu.getGyroZ();
+
+  // Smooth sensor readings
+  fx += alpha * (gx - fx);
+  fy += alpha * (gy - fy);
+  fz += alpha * (gz - fz);
+
+  // Apply dead zone
+  float xAxis = applyDeadZone(fx);
+  float yAxis = applyDeadZone(fy);
+  float zAxis = applyDeadZone(fz);
+
+  // Bluetooth mouse movement
+  if (bleMouse.isConnected()) {
+
+    // Combine all three axes
+    float horizontal = yAxis + zAxis * rollSensitivity;
+    float vertical = -xAxis;
+
+    moveX += horizontal * sensitivity * (dt / 10.0);
+    moveY += vertical * sensitivity * (dt / 10.0);
+
+    int x = (int)moveX;
+    int y = (int)moveY;
+
+    moveX -= x;
+    moveY -= y;
+
+    // Limit sudden jumps
+    x = constrain(x, -20, 20);
+    y = constrain(y, -20, 20);
+
+    if (x != 0 || y != 0) {
+      bleMouse.move(x, y);
+    }
+  }
+
+  // Push button handling
+  bool reading = digitalRead(BUTTON_PIN);
+
+  if (reading != lastReading) {
+    debounceTime = now;
+  }
+
+  if (now - debounceTime > debounceDelay) {
+
+    if (reading != stableState) {
+
+      stableState = reading;
+
+      if (stableState == LOW) {
+
+        pressTime = now;
+        buttonHandled = false;
+      }
+
+      else {
+
+        if (!buttonHandled && bleMouse.isConnected()) {
+
+          if (now - pressTime < longPressTime) {
+            bleMouse.click(MOUSE_LEFT);
+            Serial.println("LEFT CLICK");
+          }
+        }
+      }
+    }
+  }
+
+  // Long press = right click
+  if (stableState == LOW &&
+      !buttonHandled &&
+      bleMouse.isConnected()) {
+
+    if (now - pressTime >= longPressTime) {
+
+      bleMouse.click(MOUSE_RIGHT);
+
+      buttonHandled = true;
+
+      Serial.println("RIGHT CLICK");
+    }
+  }
+
+  lastReading = reading;
+
+  delay(5);
+}

@@ -205,7 +205,7 @@ esp32-air-mouse/
 ## 🧑‍💻 Author
 
 **Dipan Roy**  
-BCA Student | Hardware Enthusiast | Arduino & ESP32 Developer
+Btech Student | Hardware Enthusiast | Arduino & ESP32 Developer
 
 - 📧 Feel free to open an **Issue** or **Pull Request** for improvements!
 - ⭐ If you found this project useful, please **star** the repo!
